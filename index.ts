@@ -18,6 +18,7 @@ export = class ThumbnailCache {
     private readonly _sizeMax: number;
     private readonly _sizePreserve: number;
     private readonly _console: Console;
+    private readonly _jpegOptions: sharp.JpegOptions;
     private _writeQueue: { writes: Map<string, Buffer>, snapshot: Map<string, number> };
 
     /**
@@ -25,13 +26,15 @@ export = class ThumbnailCache {
      * @param _source source for getting full-sized images asynchronously (via local filesystem, HTTP, etc.)
      * @param size.max the maximum cache size, in bytes; cache won't grow bigger than this, no matter how large the disk is.
      * @param size.preserve always make sure there are still so many available bytes left on disk.
-     * @param opt_console if given, will be used for writing debugging logs
+     * @param options.console if given, will be used for writing debugging logs
+     * @param options.jpegOptions if given, will be used as JPEG output options for sharp
      */
-    constructor(cacheDir: string, private _source: (path: string) => Promise<Buffer>, size: { max: number, preserve: number }, opt_console: Console) {
+    constructor(cacheDir: string, private _source: (path: string) => Promise<Buffer>, size: { max: number, preserve: number }, options?: { console?: Console, jpegOptions?: sharp.JpegOptions }) {
         this._path = path.resolve(cacheDir);
         this._sizeMax = (size ? size.max : 0) || 512 * 1024 * 1024;
         this._sizePreserve = (size ? size.preserve : 0) || 256 * 1024 * 1024;
-        this._console = opt_console || null;
+        this._console = options ? options.console || null : null;
+        this._jpegOptions = { force: true, quality: 80, ...(options ? options.jpegOptions : null) };
         this._writeQueue = null;
         
         try {
@@ -68,7 +71,7 @@ export = class ThumbnailCache {
         this._log(`Cache miss for ${key}.`);
         // Either way, create the thumbnail in-memory.
         const rawBuffer = await this._source(url);
-        const resizedBuffer = await sharp(rawBuffer).resize(maxDimension, maxDimension, { fit: 'inside' }).toBuffer();
+        const resizedBuffer = await sharp(rawBuffer).resize(maxDimension, maxDimension, { fit: 'inside' }).jpeg(this._jpegOptions).toBuffer();
         this._saveToCache(key, resizedBuffer);
         return resizedBuffer;
     }
