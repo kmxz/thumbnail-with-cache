@@ -1,14 +1,14 @@
 {
   "name": "thumbnail-with-cache",
-  "version": "0.0.4",
+  "version": "0.0.5",
   "description": "Generate image thumbnails, with an LRU disk cache",
   "dependencies": {
     "sharp": "^0.23.4",
+    "@types/sharp": "^0.23.1",
     "statvfs": "^2.2.0"
   },
   "devDependencies": {
     "@types/node": "^13.1.1",
-    "@types/sharp": "^0.23.1",
     "koa": "^2.11.0",
     "typescript": "^3.7.4"
   },

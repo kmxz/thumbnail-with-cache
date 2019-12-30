@@ -8,7 +8,7 @@ const ourCache = new ThumbnailCache(
     'cache',
     reqPath => readFile(path.join('testdata', reqPath)),
     { max: 256 * 1024, preserve: 2 * 1024 * 1024 * 1024 },
-    console
+    { console }
 );
 
 const app = new (require('koa'))();
