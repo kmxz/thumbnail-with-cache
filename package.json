@@ -1,0 +1,20 @@
+{
+  "name": "thumbnail-with-cache",
+  "version": "0.0.1",
+  "description": "Generate image thumbnails, with an LRU disk cache",
+  "dependencies": {
+    "sharp": "^0.23.4",
+    "statvfs": "^2.2.0"
+  },
+  "devDependencies": {
+    "@types/node": "^13.1.1",
+    "koa": "^2.11.0",
+    "typescript": "^3.7.4"
+  },
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc -p ."
+  },
+  "repository": "github:kmxz/thumbnail-with-cache"
+}

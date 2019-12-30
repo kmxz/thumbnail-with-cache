@@ -1,0 +1,14 @@
+{
+    "compilerOptions": {
+        "module": "commonjs",
+        "moduleResolution": "Node",
+        "target": "ES2017",
+        "types" : ["node"],
+        "declaration": true,
+        "outDir": "dist"
+    },
+    "files": [
+        "index.ts",
+        "example.ts"
+    ]
+}
