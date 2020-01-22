@@ -12,7 +12,7 @@ const writeFile = util.promisify(fs.writeFile);
 
 const statvfs = util.promisify(statvfsRaw);
 
-export = class ThumbnailCache {
+export default class ThumbnailCache {
 
     private readonly _path: string;
     private readonly _sizeMax: number;
