@@ -49,6 +49,10 @@ export default class ThumbnailCache {
         }
     }
 
+    /**
+     * @param url the URL to fetch source image from. will be handled by the `_source` given.
+     * @param maxDimension the longer side of the image. return the original image w/o resizing when <= 0
+     */
     async getThumbnail(url: string, maxDimension: number): Promise<Buffer> {
         const key = url.replace(/[^A-Za-z0-9_\-\.]/g, r => '(' + r.charCodeAt(0).toString(36) + ')') + '@' + maxDimension;
         try {
@@ -75,7 +79,7 @@ export default class ThumbnailCache {
         // Either way, create the thumbnail in-memory.
         const rawBuffer = await this._source(url);
         try {
-            const resizedBuffer = await sharp(rawBuffer).resize(maxDimension, maxDimension, { fit: 'inside' }).jpeg(this._jpegOptions).toBuffer();
+            const resizedBuffer = (maxDimension > 0) ? await sharp(rawBuffer).resize(maxDimension, maxDimension, { fit: 'inside' }).jpeg(this._jpegOptions).toBuffer() : rawBuffer;
             this._saveToCache(key, resizedBuffer);
             return resizedBuffer;
         } catch (e) {
