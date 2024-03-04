@@ -1,22 +1,19 @@
-import fs = require('fs');
+import fs = require('fs/promises');
 import path = require('path');
 import sharp = require('sharp');
-import util = require('util');
-import statvfsRaw = require('statvfs');
 
-const readFile = util.promisify(fs.readFile);
-const readdir = util.promisify(fs.readdir);
-const stat = util.promisify(fs.stat);
-const unlink = util.promisify(fs.unlink);
-const writeFile = util.promisify(fs.writeFile);
+const { readFile, readdir, stat, unlink, writeFile } = fs;
 
-const statvfs = util.promisify(statvfsRaw);
+type BufferWithTimestamp = Buffer & { fetchedTime: Date };
+const withTimestamp = (buffer: Buffer, fetchedTime: Date): BufferWithTimestamp => {
+    (buffer as BufferWithTimestamp).fetchedTime = fetchedTime;
+    return buffer as BufferWithTimestamp;
+};
 
 export default class ThumbnailCache {
 
     private readonly _path: string;
     private readonly _sizeMax: number;
-    private readonly _sizePreserve: number;
     private readonly _console: Console;
     private readonly _jpegOptions: sharp.JpegOptions;
     private readonly _fallbackToOriginal: boolean;
@@ -26,50 +23,46 @@ export default class ThumbnailCache {
      * @param cacheDir path for storing images
      * @param _source source for getting full-sized images asynchronously (via local filesystem, HTTP, etc.)
      * @param size.max the maximum cache size, in bytes; cache won't grow bigger than this, no matter how large the disk is.
-     * @param size.preserve always make sure there are still so many available bytes left on disk.
      * @param options.console if given, will be used for writing debugging logs
      * @param options.jpegOptions if given, will be used as JPEG output options for sharp
      * @param options.fallbackToOriginal if true, will return the original image in case there's an error in resizing
      */
-    constructor(cacheDir: string, private _source: (path: string) => Promise<Buffer>, size: { max: number, preserve: number }, options?: { console?: Console, jpegOptions?: sharp.JpegOptions, fallbackToOriginal?: boolean }) {
+    constructor(cacheDir: string, private _source: (path: string) => Promise<Buffer>, size: { max: number }, options?: { console?: Console, jpegOptions?: sharp.JpegOptions, fallbackToOriginal?: boolean }) {
         this._path = path.resolve(cacheDir);
         this._sizeMax = (size ? size.max : 0) || 512 * 1024 * 1024;
-        this._sizePreserve = (size ? size.preserve : 0) || 256 * 1024 * 1024;
         this._console = options ? options.console || null : null;
         this._jpegOptions = { force: true, quality: 80, ...(options ? options.jpegOptions : null) };
         this._fallbackToOriginal = !!options.fallbackToOriginal;
         this._writeQueue = null;
-        
-        try {
-            fs.mkdirSync(this._path);
-        } catch (e) {
+
+        fs.mkdir(this._path).catch(e => {
             if (e.code !== 'EEXIST') {
                 throw e;
             }
-        }
+        });
     }
 
     /**
      * @param url the URL to fetch source image from. will be handled by the `_source` given.
      * @param maxDimension the longer side of the image. return the original image w/o resizing when <= 0
      */
-    async getThumbnail(url: string, maxDimension: number): Promise<Buffer> {
+    async getThumbnail(url: string, maxDimension: number): Promise<BufferWithTimestamp> {
         const key = url.replace(/[^A-Za-z0-9_\-\.]/g, r => '(' + r.charCodeAt(0).toString(36) + ')') + '@' + maxDimension;
         try {
             const fullPath = path.resolve(this._path, key);
-            const cacheContent = await readFile(fullPath);
-            const now = new Date();
+            const [cacheContent, cacheStat] = await Promise.all([readFile(fullPath), stat(fullPath)]);
             if (this._writeQueue) {
                 this._writeQueue.snapshot.delete(key);
                 this._writeQueue.snapshot.set(key, cacheContent.byteLength); // Put it at the end.
             }
-            fs.utimes(fullPath, now, now, err => { // Not waiting for it before return.
+            const now = new Date();
+            fs.utimes(fullPath, now, cacheStat.mtime).catch(err => {
                 if (err) {
                     this._error(`Error when setting mtime of ${key}`, err);
                 }
             });
             this._log(`Cache hit for ${key}.`);
-            return cacheContent;
+            return withTimestamp(cacheContent, cacheStat.mtime);
         } catch (e) {
             if (e.code !== 'ENOENT') {
                 this._error(`Error when attempting to read ${key}.`, e);
@@ -78,10 +71,14 @@ export default class ThumbnailCache {
         this._log(`Cache miss for ${key}.`);
         // Either way, create the thumbnail in-memory.
         const rawBuffer = await this._source(url);
+        const resizedBuffer = (maxDimension > 0) ? await this.resize(key, rawBuffer, maxDimension) : rawBuffer;
+        this._saveToCache(key, resizedBuffer);
+        return withTimestamp(resizedBuffer, new Date());
+    }
+
+    private async resize(key: string, rawBuffer: Buffer, maxDimension: number): Promise<Buffer> {
         try {
-            const resizedBuffer = (maxDimension > 0) ? await sharp(rawBuffer).resize(maxDimension, maxDimension, { fit: 'inside' }).jpeg(this._jpegOptions).toBuffer() : rawBuffer;
-            this._saveToCache(key, resizedBuffer);
-            return resizedBuffer;
+            return await sharp(rawBuffer).resize(maxDimension, maxDimension, { fit: 'inside' }).jpeg(this._jpegOptions).toBuffer();
         } catch (e) {
             if (this._fallbackToOriginal) {
                 this._error(`Failed to resize ${key}`, e);
@@ -90,11 +87,6 @@ export default class ThumbnailCache {
                 throw e;
             }
         }
-    }
-
-    private async _getFreeSpace(): Promise<number> {
-        const stats = await statvfs(this._path);
-        return stats.bsize * stats.bavail;
     }
 
     private _log(...args: any[]): void {
@@ -123,8 +115,8 @@ export default class ThumbnailCache {
         const files = await readdir(this._path);
         return new Map(
             (await Promise.all(files.map(f => stat(path.resolve(this._path, f)))))
-                .map(({ mtime, size }, index) => ({ key: files[index], mtime, size }))
-                .sort((a, b) => a.mtime.getTime() - b.mtime.getTime())
+                .map(({ atime, size }, index) => ({ key: files[index], atime, size }))
+                .sort((a, b) => a.atime.getTime() - b.atime.getTime())
                 .map(({ key, size }) => [key, size])); // All files, sorted from old to new.
     }
 
@@ -141,10 +133,7 @@ export default class ThumbnailCache {
         this._log(`Snapshot ready (total size: ${totalSize} bytes).`, fullSnapshot);
         // Now we have a full snapshot (which may still change over time).
         this._writeQueue.snapshot = fullSnapshot;
-        // Get the available space on disk.
-        const availableSpace = await this._getFreeSpace();
-        const targetSizeLimitation = Math.max(Math.min(this._sizeMax, availableSpace - this._sizePreserve + totalSize), 1024);
-        this._log(`Free size in disk: ${availableSpace} bytes; max cache size ${targetSizeLimitation}.`);
+        const targetSizeLimitation = Math.max(this._sizeMax, 1024);
         const writesIt = this._writeQueue.writes.entries();
         for (let cur = writesIt.next(); !cur.done; cur = writesIt.next()) {
             const [key, buffer] = cur.value;
